@@ -11,6 +11,7 @@ dependencies = [
     "pandas>=3.0.1",
     "photutils>=2.3.0",
     "pillow>=12.1.1",
+    "ruff>=0.15.7",
     "scikit-image>=0.26.0",
     "scikit-learn>=1.8.0",
     "scipy>=1.17.1",
