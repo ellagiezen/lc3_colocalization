@@ -9,7 +9,10 @@ dependencies = [
     "jupyter>=1.1.1",
     "matplotlib>=3.10.8",
     "pandas>=3.0.1",
+    "photutils>=2.3.0",
     "pillow>=12.1.1",
     "scikit-image>=0.26.0",
+    "scikit-learn>=1.8.0",
     "scipy>=1.17.1",
+    "seaborn>=0.13.2",
 ]
