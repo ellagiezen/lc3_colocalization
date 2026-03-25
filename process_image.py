@@ -5,8 +5,9 @@ Modularized functions from Jupyter Notebook cells 4-9 (Z-stack maximum intensity
 """
 
 import numpy as np
+import pandas as pd
 from skimage import measure, filters
-from skimage.morphology import binary_dilation
+from skimage.morphology import dilation
 
 
 def perform_mip(image_data):
@@ -141,7 +142,7 @@ def create_radii_profiles(clean_labeled_mav, channel_lc3, n_steps=10):
         previous_mask = current_mask
         for step in range(1, n_steps):
             # Grow the shape by 1 pixel
-            expanded_mask = binary_dilation(previous_mask)
+            expanded_mask = dilation(previous_mask)
             
             # Identify the new ring
             ring_mask = expanded_mask ^ previous_mask
@@ -162,18 +163,25 @@ def create_radii_profiles(clean_labeled_mav, channel_lc3, n_steps=10):
     return profile_matrix
 
 
-def process_image_pipeline(image_data, min_blob_size=10, max_blob_size=1000, n_steps=10):
+def process_image_pipeline(image_data, filename=None, min_blob_size=10, max_blob_size=1000, n_steps=10):
     """
     Complete image processing pipeline from MIP to radius profiles.
     
     Args:
         image_data: 4D numpy array with shape (Z, Y, X, C) or (Z, C, Y, X)
+        filename: Optional filename for the image (used in DataFrame)
         min_blob_size: Minimum blob area in pixels
         max_blob_size: Maximum blob area in pixels
         n_steps: Number of expansion steps for profiles
         
     Returns:
-        dict: Dictionary containing all processing results
+        pandas.DataFrame: DataFrame with one row per MAV blob containing:
+            - filename: Image filename
+            - blob_index: Blob index
+            - blob_area: Blob area in pixels
+            - x_position: X coordinate of centroid
+            - y_position: Y coordinate of centroid
+            - profile_0 to profile_{n_steps-1}: Intensity profile values
     """
     # Step 1: Maximum Intensity Projection
     mip_image, channel_dapi, channel_lc3, channel_brightfield, channel_mav = perform_mip(image_data)
@@ -191,20 +199,36 @@ def process_image_pipeline(image_data, min_blob_size=10, max_blob_size=1000, n_s
     # Step 4: Create radius profiles
     profile_matrix = create_radii_profiles(clean_labeled_mav, channel_lc3, n_steps)
     
-    return {
-        'mip_image': mip_image,
-        'channels': {
-            'dapi': channel_dapi,
-            'lc3': channel_lc3,
-            'brightfield': channel_brightfield,
-            'mav': channel_mav
-        },
-        'binary_mav': binary_mav,
-        'labeled_mav': labeled_mav,
-        'clean_labeled_mav': clean_labeled_mav,
-        'centroids': {'x': centroids_x, 'y': centroids_y},
-        'blob_contours': blob_contours,
-        'profile_matrix': profile_matrix,
-        'num_valid_blobs': num_valid_blobs
-    }
+    # Create DataFrame with blob information
+    blob_data = []
+    
+    for blob_idx in range(num_valid_blobs):
+        # Get blob properties
+        blob_label = blob_idx + 1  # Labels start from 1
+        blob_mask = (clean_labeled_mav == blob_label)
+        blob_area = np.sum(blob_mask)
+        
+        # Get centroid (convert from (y, x) to (x, y) for consistency)
+        x_pos = centroids_x[blob_idx] if blob_idx < len(centroids_x) else np.nan
+        y_pos = centroids_y[blob_idx] if blob_idx < len(centroids_y) else np.nan
+        
+        # Create row data
+        row_data = {
+            'filename': filename,
+            'blob_index': blob_idx,
+            'blob_area': blob_area,
+            'x_position': x_pos,
+            'y_position': y_pos
+        }
+        
+        # Add profile columns
+        for step in range(n_steps):
+            row_data[f'profile_{step}'] = profile_matrix[blob_idx, step]
+        
+        blob_data.append(row_data)
+    
+    # Create DataFrame
+    df = pd.DataFrame(blob_data)
+    
+    return df
 
