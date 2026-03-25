@@ -6,6 +6,8 @@ Modularized functions from Jupyter Notebook cells 4-9 (Z-stack maximum intensity
 
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
+from pathlib import Path
 from skimage import measure, filters
 from skimage.morphology import dilation
 
@@ -163,16 +165,122 @@ def create_radii_profiles(clean_labeled_mav, channel_lc3, n_steps=10):
     return profile_matrix
 
 
-def process_image_pipeline(image_data, filename=None, min_blob_size=10, max_blob_size=1000, n_steps=10):
+def _save_visualization_images(df, mip_image, channel_dapi, channel_lc3, 
+                             channel_brightfield, channel_mav, 
+                             blob_contours, filename, n_steps):
+    """
+    Save visualization images for validation.
+    
+    Args:
+        df: DataFrame containing blob data
+        mip_image: Maximum intensity projection image
+        channel_dapi: DAPI channel
+        channel_lc3: LC3 channel
+        channel_brightfield: Brightfield channel
+        channel_mav: MAV channel
+        blob_contours: List of blob contours
+        filename: Original filename
+        n_steps: Number of profile steps
+    """
+    # Create output directories
+    out_dir = Path("./Out")
+    overview_dir = out_dir / "Overview"
+    
+    # Convert filename to Path object for stem handling
+    filename_path = Path(filename) if isinstance(filename, str) else filename
+    clusters_dir = out_dir / "Clusters" / filename_path.stem
+    
+    overview_dir.mkdir(parents=True, exist_ok=True)
+    clusters_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Remove file extension for cleaner filenames
+    base_filename = filename_path.stem
+    
+    # 1. Save overview image (2x2 subplots of all channels)
+    fig, axs = plt.subplots(2, 2, figsize=(12, 12))
+    ax = axs.ravel()
+    
+    # DAPI
+    ax[0].imshow(channel_dapi, cmap="gray")
+    ax[0].set_title("DAPI (Max Intensity)")
+    ax[0].axis("off")
+    
+    # MAV
+    ax[1].imshow(channel_mav, cmap="gray")
+    ax[1].set_title("MAV (Max Intensity)")
+    ax[1].axis("off")
+    
+    # Brightfield
+    ax[2].imshow(channel_brightfield, cmap="gray")
+    ax[2].set_title("Brightfield (Max Intensity)")
+    ax[2].axis("off")
+    
+    # LC3
+    ax[3].imshow(channel_lc3, cmap="gray")
+    ax[3].set_title("LC3 (Max Intensity)")
+    ax[3].axis("off")
+    
+    plt.suptitle(f"Overview: {filename_path.name}", y=0.98, fontsize=16)
+    plt.tight_layout()
+    
+    overview_path = overview_dir / f"{base_filename}.jpg"
+    plt.savefig(overview_path, dpi=300, bbox_inches='tight', pad_inches=0.1)
+    plt.close()
+    print(f"Saved overview image to: {overview_path}")
+    
+    # 2. Save individual blob images
+    for blob_idx, contour in enumerate(blob_contours):
+        fig, ax = plt.subplots(1, 2, figsize=(12, 6))
+        
+        # Left: MAV channel with blob contour
+        ax[0].imshow(channel_mav, cmap="gray")
+        ax[0].plot(contour[:, 1], contour[:, 0], color="lime", linewidth=2)
+        ax[0].set_title(f"MAV Channel - Blob {blob_idx}")
+        ax[0].axis("off")
+        
+        # Right: LC3 channel with blob contour and profile
+        ax[1].imshow(channel_lc3, cmap="gray")
+        ax[1].plot(contour[:, 1], contour[:, 0], color="lime", linewidth=2)
+        
+        # Add profile plot as inset
+        from mpl_toolkits.axes_grid1.inset_locator import inset_axes
+        inset_ax = inset_axes(ax[1], width="40%", height="30%", loc='lower right')
+        
+        # Get profile for this blob
+        profile_cols = [col for col in df.columns if col.startswith('profile_')]
+        blob_profile = df.iloc[blob_idx][profile_cols].values
+        
+        steps = np.arange(len(blob_profile))
+        inset_ax.plot(steps, blob_profile, color='purple', lw=2, marker='o')
+        inset_ax.set_title('LC3 Profile', fontsize=8)
+        inset_ax.set_xlabel('Step', fontsize=6)
+        inset_ax.set_ylabel('Intensity', fontsize=6)
+        inset_ax.grid(True, alpha=0.5)
+        
+        ax[1].set_title(f"LC3 Channel - Blob {blob_idx}")
+        ax[1].axis("off")
+        
+        plt.suptitle(f"{filename_path.name} - Blob {blob_idx}", y=0.95, fontsize=14)
+        # Note: tight_layout() removed due to incompatibility with inset axes
+        
+        blob_path = clusters_dir / f"blob_{blob_idx:03d}.jpg"
+        plt.savefig(blob_path, dpi=300, bbox_inches='tight', pad_inches=0.1)
+        plt.close()
+        
+    print(f"Saved {len(blob_contours)} blob images to: {clusters_dir}")
+
+
+def process_image_pipeline(image_data, filename=None, min_blob_size=10, max_blob_size=1000, n_steps=10, save_images=False):
     """
     Complete image processing pipeline from MIP to radius profiles.
     
     Args:
         image_data: 4D numpy array with shape (Z, Y, X, C) or (Z, C, Y, X)
-        filename: Optional filename for the image (used in DataFrame)
+        filename: Optional filename for the image (used in DataFrame and image saving)
         min_blob_size: Minimum blob area in pixels
         max_blob_size: Maximum blob area in pixels
         n_steps: Number of expansion steps for profiles
+        save_images: If True, saves overview and individual blob images to ./Out/ folder
         
     Returns:
         pandas.DataFrame: DataFrame with one row per MAV blob containing:
@@ -182,6 +290,11 @@ def process_image_pipeline(image_data, filename=None, min_blob_size=10, max_blob
             - x_position: X coordinate of centroid
             - y_position: Y coordinate of centroid
             - profile_0 to profile_{n_steps-1}: Intensity profile values
+        
+    Side effects:
+        If save_images=True, creates:
+        - ./Out/Overview/[filename].jpg - Overview of all channels
+        - ./Out/Clusters/[filename]/blob_[index].jpg - Individual blob images
     """
     # Step 1: Maximum Intensity Projection
     mip_image, channel_dapi, channel_lc3, channel_brightfield, channel_mav = perform_mip(image_data)
@@ -229,6 +342,12 @@ def process_image_pipeline(image_data, filename=None, min_blob_size=10, max_blob
     
     # Create DataFrame
     df = pd.DataFrame(blob_data)
+    
+    # Save images if requested
+    if save_images and filename:
+        _save_visualization_images(df, mip_image, channel_dapi, channel_lc3, 
+                                  channel_brightfield, channel_mav, 
+                                  blob_contours, filename, n_steps)
     
     return df
 
